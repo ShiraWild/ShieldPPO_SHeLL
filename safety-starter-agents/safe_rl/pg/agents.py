@@ -37,7 +37,7 @@ class Agent:
             learn_penalty = self.params.get('learn_penalty', False)
             assert not(learn_penalty), \
                 "If you are not using a penalty coefficient, you should " + \
-                "not try to learn one."
+                "not 5.12 to learn one."
 
     def ensure_satisfiable_optimization(self):
         first_order = self.params.get('first_order', False)
@@ -294,7 +294,7 @@ class CPOAgent(TrustRegionAgent):
                 self.logger.log('Alert! Attempting feasible recovery!', 'yellow')
             else:
                 # x = 0 infeasible, and safety halfspace is outside trust region
-                # ==> whole trust region is infeasible, try to fail gracefully
+                # ==> whole trust region is infeasible, 5.12 to fail gracefully
                 optim_case = 0
                 self.logger.log('Alert! Attempting infeasible recovery!', 'red')
 

@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 from gym.utils import seeding
 from gym.wrappers.monitoring.video_recorder import VideoRecorder
+from gym import spaces, register
 from highway_env.envs import HighwayEnvFast, MergeEnv
 # import tensorflow as tf
 # import safe_rl
@@ -20,8 +21,7 @@ from torch.distributions import Categorical
 import numpy as np
 import highway_env
 # from SafetyRulesParser import SafetyRulesParser
-from ppo_shieldLSTM import PPO, ShieldPPO, RuleBasedShieldPPO, PPOCostAsReward
-from gym import spaces, register
+from updated_ppo_GAN import PPO, ShieldPPO, RuleBasedShieldPPO, PPOCostAsReward, Generator
 import sys
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -43,8 +43,10 @@ class Wrapper(gym.Wrapper):
         # the function returns an observation
         return obs.reshape(-1)
 
-    def reset(self):
+    def reset(self, gan_output = None):
         # returns the first observation of the env
+        if gan_output: # In case of using generator
+            self.update_params(gan_output)
         obs = self.env.reset()
         return self.observation(obs)
 
@@ -62,14 +64,7 @@ class EnvsWrapper(gym.Wrapper):
         self.np_random = self.np_random, _ = seeding.np_random(seed)
         self.env_index = self.np_random.randint(0, len(envs))
         super().__init__(self.envs[self.env_index])
-        # TODO - CHANGED LINE
-        """
-        TODO - changed this line- it used to be
-        it used to be
-        self.state_dim =  np.prod(self.env.observation_space.spaces[0].shape) + self.env.observation_space.spaces[1].n + len(envs)
-        """
         self.state_dim = np.prod(self.env.observation_space.shape) + len(envs)  # low = self.env.observation_space.low
-
         self.no_render = no_render
         if self.no_render:
             self.env.render_mode = 'no_render'
@@ -80,7 +75,6 @@ class EnvsWrapper(gym.Wrapper):
         #                                     shape=(dim_state,),
         #                                     dtype=np.float32)
         # dim_state =no_render
-
         self.actions = envs[0].action_type.actions
         self.has_continuous_action_space = has_continuous_action_space
 
@@ -89,7 +83,7 @@ class EnvsWrapper(gym.Wrapper):
         one_hot_task[self.env_index] = 1
         return np.append(obs, one_hot_task)
 
-    def reset(self):
+    def reset(self, gan_output=None):
         self.env_index = self.np_random.randint(0, len(self.envs))
         self.env = self.envs[self.env_index]
         # low = self.env.observation_space.low
@@ -99,8 +93,10 @@ class EnvsWrapper(gym.Wrapper):
         #                                     high=high.reshape(-1),
         #                                     shape=(dim_state,),
         #                                     dtype=np.float32)
+        if gan_output:
+            self.config.update(gan_output)
         obs = self.env.reset()
-        # return obs also because its shape is (number_of_vehicels, number_of_features) -> good for the log
+        # return obs also because its shape is (number_of_vehicles, number_of_features) -> good for the log
         return self.observation(obs), obs
 
     def step(self, action):
@@ -163,14 +159,10 @@ def train(arguments=None):
     trajectory - sequence of (state,action) pairs that the agent encounters during its interaction with the environment within a single episode.
     """
     global env, rewards
-
-    #        ppo_agent = ShieldPPO(multi_task_env.state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip,
-    # has_continuous_action_space, action_std)
-    global env, rewards
     parser = argparse.ArgumentParser()
     parser.add_argument("--algo", required=True,
                         help="algorithm to use:  PPO | ShieldPPO | RuleBasedShieldPPO (REQUIRED)")
-    parser.add_argument("--envs", default=["HighwayEnvFastNoNormalization-v0"], nargs="+",
+    parser.add_argument("--envs", default=["HighwayEnvSimple-v0"], nargs="+",
                         help="names of the environment to train on")
     parser.add_argument("--print_freq", default=1000,
                         help="print avg reward in the interval (in num timesteps)")
@@ -190,7 +182,7 @@ def train(arguments=None):
                         help="learning rate for actor network")
     parser.add_argument("--lr_critic", type=float, default=0.0001,
                         help="learning rate for critic network")
-    parser.add_argument("--max_ep_len", type=int, default=50,
+    parser.add_argument("--max_ep_len", type=int, default=500,
                         help="max timesteps in one episode")
     parser.add_argument("--max_training_timesteps", type=int, default=int(1e6),
                         help="break training loop if timeteps > max_training_timesteps")
@@ -206,7 +198,13 @@ def train(arguments=None):
     parser.add_argument("--masking_threshold", type=int, default=0, help="Time step at which to start using the shield")
     parser.add_argument("--no_render", action="store_true", help="Disable rendering during simulation")
     parser.add_argument("--k_last_states", type=int, default=1, help="K last states to update the policies based on")
-    parser.add_argument("--safety_treshold", type=float, default=0.5, help= "Safety treshold for the Shield network")
+    parser.add_argument("--safety_treshold", type=float, default=0.5, help="Safety treshold for the Shield network")
+    parser.add_argument("--gen_masking_tresh", type=float, default=0,
+                        help="Episode Number at which to start using the Generator, for GAN")
+    parser.add_argument("--update_gen_timestep", type=float, default=500,
+                        help="Update the generator network each update_gen_timestep time steps")
+    parser.add_argument("--batch_size", type=float, default=1024,
+                        help="Batch size to sample from buffer while updating shield or generator")
     args = parser.parse_args(arguments)
     # nv_name = "highway-three-v0"
     # env_name = "highway-v0"
@@ -217,6 +215,7 @@ def train(arguments=None):
     has_continuous_action_space = False
     k_last_states = args.k_last_states
     safety_treshold = args.safety_treshold
+    gen_masking_tresh = args.gen_masking_tresh
     max_ep_len = args.max_ep_len  # max timesteps in one episode
     max_training_timesteps = args.max_training_timesteps  # break training loop if timeteps > max_training_timesteps
     # print_freq = max_ep_len * 4     # print avg reward in the interval (in num timesteps)
@@ -225,7 +224,9 @@ def train(arguments=None):
     log_freq = args.log_freq  # log avg reward in the interval (in num timesteps)
     save_model_freq = args.save_model_freq  # save model frequency (in num timesteps)
     masking_threshold = args.masking_threshold
+    update_gen_timestep = args.update_gen_timestep
     action_std = None
+    batch_size = args.batch_size
     no_render = args.no_render
     action_std_decay_freq = None
     action_std_decay_rate = None
@@ -238,7 +239,7 @@ def train(arguments=None):
     gamma = args.gamma  # discount factor [0.9,0.95  0.99]
     lr_actor = args.lr_actor  # learning rate for actor network [1e-4, 5e-4, 1e-3]
     lr_critic = args.lr_critic  # learning rate for critic network [1e-4, 5e-4, 1e-3]
-    #####################################################
+    ############################################gy#########
     agent = args.algo
     register_envs(args.envs)
     env_list = [gym.make(x) for x in args.envs]
@@ -263,18 +264,25 @@ def train(arguments=None):
         print("Rendering is enabled")
     #### create new log file for each run
     curr_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    base_path = f"./models/{agent}_{curr_time}"
+    run_goal = "SimplerEnv_checkall_"
+    base_path = f"./models/14.12/shira_{curr_time}"
     save_model_path = f"./{base_path}/model.pth"
     # Added another path to save the shield network (updated parameters)
     save_shield_path = f"./{base_path}/shield.pth"
+    save_gen_path = f"./{base_path}/gen.pth"
     save_collision_info_path = f"./{base_path}/collision_info_log.log"
     save_stats_path = f"./{base_path}/stats.log"
     save_shield_loss_stats_path = f"./{base_path}/shield_loss_stats.log"
+    save_gen_loss_stats_path = f"./{base_path}/gen_loss_stats.log"
     save_args_path = f"./{base_path}/commandline_args.txt"
     os.makedirs(base_path, exist_ok=True)
     os.makedirs(base_path + "/Videos", exist_ok=True)
     # safe_rl_baselines = ['ppo_lagrangian', 'trpo', 'trpo_lagrangian', 'cpo']
-    # Create the object for agent
+    # Input for gen - defines the parameters that we want to generate for the env configuration, it's range and type.
+    param_ranges = {'speed_limit': {'range': (20, 40), 'type': float},
+                    'vehicles_count': {'range': (10, 30), 'type': int},
+                    'vehicles_density': {'range': (1, 5), 'type': int}, 'ego_spacing': {'range': (1, 3), 'type': float}}
+    # Create agent object
     with open(save_args_path, 'w') as f:
         json.dump(args.__dict__, f, indent=2)
     if agent == "PPO":
@@ -283,7 +291,7 @@ def train(arguments=None):
     elif agent == "ShieldPPO":
         ppo_agent = ShieldPPO(multi_task_env.state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip,
                               has_continuous_action_space, action_std, masking_threshold=masking_threshold,
-                              k_last_states=k_last_states, safety_treshold = safety_treshold)
+                              k_last_states=k_last_states, safety_treshold=safety_treshold, param_ranges=param_ranges)
 
 
     elif agent == 'PPOCAR':
@@ -301,19 +309,27 @@ def train(arguments=None):
     collision_info = {}
     costs = []
     shield_losses = []
+    gen_losses = []
     stats = []
     start_time = time.time()
     amount_of_done = 0
-    # TODO - added this to store episode shield losses (for plots)
-    average_episode_shield_loss = []
-    shield_loss_update_stats = {}
     # training loop
+    shield_loss_update_stats = {}
+    gen_loss_update_stats = {}
     while time_step <= max_training_timesteps:
-        # TODO - added this
-        ep_shield_loss = []
         # NEW EPOCH / EPISODE (defined by i_episode) - EACH EPISODE STARTS WITH A NEW STATE
         # print("Current time_step is ", time_step)
-        state, state_vf = multi_task_env.reset()
+        # 1 means that there was not a collision (add to gen.no_collision_rb) - by default
+        collision_during_ep = 1
+        # using_gen = False in case of not using generator
+        if i_episode >= gen_masking_tresh:
+            param_dict, safety_scores = ppo_agent.get_generated_env_config()
+            state, state_vf = multi_task_env.reset(param_dict)
+            gen_chosen_state = state
+            # The first action to apply, chosen by the generator (the action with the maximal score)
+            gen_chosen_action = safety_scores.index(max(safety_scores))
+        else:
+            state, state_vf = multi_task_env.reset()
         last_states = [state]
         prev_states = []
         last_states_vf = [state_vf]
@@ -321,7 +337,7 @@ def train(arguments=None):
         valid_actions = multi_task_env.get_valid_actions()
         trajectory = collections.deque([state])
         recorder_closed = False
-        # INITALIZE THE REWARDS & COSTS (CUMULATIVE)
+        # INITIALIZE THE REWARDS & COSTS (CUMULATIVE)
         current_ep_reward = 0
         current_ep_cost = 0
         current_ep_len = 0
@@ -340,7 +356,11 @@ def train(arguments=None):
             prev_states = last_states.copy()
             prev_states_vf = last_states_vf.copy()
             action, safety_scores, no_safe_action = ppo_agent.select_action(last_states, valid_actions, time_step)
-        #    print("the selected action is", action)
+            #    print("the selected action is", action)
+            # In case of an episode that uses the Generator, in the first step we will use the chosen action by Gen
+            if (i_episode >= gen_masking_tresh) and (t==1):
+                # For the first time, the agent will choose the action chosen by generator in any case.
+                action = gen_chosen_action
             state, reward, done, info, state_vf = multi_task_env.step(action)
             last_states.append(state)
             last_states_vf.append(state_vf)
@@ -353,10 +373,13 @@ def train(arguments=None):
                 trajectory.pop()
             # Error Diffusion - "no safe action according to shield"
             # in this case we assume that it happens because there are no safe actions from the given state, so we want to teach the agent that the prev state and the action that led to the current state is a bad example for shield buffer.
-            if (len(prev_prev_states) > 0) and (time_step >= masking_threshold) and (no_safe_action == True) and (last_added_to_buffer == 1):
+            if (len(prev_prev_states) > 0) and (time_step >= masking_threshold) and (no_safe_action == True) and (
+                    last_added_to_buffer == 1):
                 ppo_agent.move_last_pos_to_neg()
+                # TODO -  ADD THIS METHOD FOR GEN ALSO?
             if args.record_mistakes:
                 video_recorder.capture_frame()
+
             ##  adding only one reward to the buffer
             ppo_agent.buffer.rewards.append(reward)
             ppo_agent.buffer.costs.append(info['cost'])
@@ -370,15 +393,20 @@ def train(arguments=None):
                 ("update succuess")
             # The update of the shield is more frequent
             if time_step % update_shield_timestep == 0 and agent == "ShieldPPO":
-                # shield_loss
                 shield_loss, len_y_pos, avg_y_pos, len_y_neg, avg_y_neg = ppo_agent.update_shield(1024)
-                shield_loss_update_stats[time_step] = (i_episode, t, shield_loss, len_y_pos, avg_y_pos, len_y_neg, avg_y_neg)
                 shield_losses.append(shield_loss)
-                ep_shield_loss.append(shield_loss)
+                shield_loss_update_stats[time_step] = (i_episode, t, shield_loss, len_y_pos, avg_y_pos, len_y_neg, avg_y_neg)
+            if time_step % update_gen_timestep == 0 and agent == "ShieldPPO" and i_episode >= gen_masking_tresh:
+                gen_loss, len_y_collision, avg_y_collision, len_y_no_collision, avg_y_no_collision = ppo_agent.update_gen(batch_size)
+                gen_loss_update_stats[time_step] = (
+                i_episode, t, gen_loss, len_y_collision, avg_y_collision, len_y_no_collision, avg_y_no_collision)
+                gen_losses.append(gen_loss)
             # cost - the real label of the action
             if info["cost"] > 0:
                 print("Collision !!!:(")
-                # this is not true because collision_info[time_step] should save a list
+                if collision_during_ep == 1:
+                    # collision_during_ep = 0 means that there was a collision, add to gen.collision_rb
+                    collision_during_ep = 0
                 collision_info[time_step] = (i_episode, t, prev_states_vf, safety_scores, no_safe_action, action)
                 is_mistake = True
             if agent == "ShieldPPO" or agent == "RuleBasedShieldPPO":
@@ -397,25 +425,34 @@ def train(arguments=None):
                             for item in reversed(trajectory):
                                 f.write(f"{item}\n")
                     last_added_to_buffer = 0
-                    #  The seccond argument is the last informative layer index - according to the original amount of states, with no padding.
+                    #  The second argument is the last informative layer index - according to the original amount of states, with no padding.
+                    # Shield Buffer: Collision - add to neg_rb
                     ppo_agent.add_to_shield(padded_prev_states, len(prev_states) - 1, action, 0)
                 else:
                     last_added_to_buffer = 1
-                    ppo_agent.add_to_shield(padded_prev_states,len(prev_states) -1, action, 1)
+                    # Shield Buffer: No Collision - add to pos_rb
+                    ppo_agent.add_to_shield(padded_prev_states, len(prev_states) - 1, action, 1)
+
+
             # if continuous action space; then decay action std of ouput action distribution
             if has_continuous_action_space and time_step % action_std_decay_freq == 0:
                 ppo_agent.decay_action_std(action_std_decay_rate, min_action_std)
 
             # log in logging file
             if time_step % log_freq == 0:
-                torch.save((time_steps, rewards, costs, tasks, time.time() - start_time, episodes_len, amount_of_done), save_stats_path)
+                torch.save((time_steps, rewards, costs, tasks, time.time() - start_time, episodes_len, amount_of_done),
+                           save_stats_path)
 
+                torch.save(shield_loss_update_stats, save_shield_loss_stats_path)
+                torch.save(gen_loss_update_stats, save_gen_loss_stats_path)
             # printing average reward
             if time_step % print_freq == 0:
                 recent_reward = np.array(rewards[max(0, len(rewards) - 10):]).mean()
                 recent_cost = np.array(costs[max(0, len(costs) - 10):]).mean()
                 if agent == "ShieldPPO":
                     recent_shield_loss = np.array(shield_losses[max(0, len(shield_losses) - 10):]).mean()
+                    recent_gen_loss = np.array(gen_losses[max(0, len(gen_losses) - 10):]).mean()
+
                     print(
                         f"Episode : {i_episode:4d} Reward {recent_reward:6.2f} Cost {recent_cost:6.2f} Shield Loss {recent_shield_loss:6.2f} Time {(time.time() - start_time) / 60:.2f} min")
                 else:
@@ -424,14 +461,16 @@ def train(arguments=None):
 
             # save model weights
             if time_step % save_model_freq == 0:
-                ppo_agent.save(save_model_path, save_shield_path)
+                ppo_agent.save(save_model_path, save_shield_path, save_gen_path)
             # THE EPOCH FINISHES IF DONE == TRUE (REACHED TO FINAL STATE) OR REACHED TO MAX_EP_LEN
             if done:
-                episode_shield_loss = np.array(shield_losses[-max_ep_len:]).mean()
                 amount_of_done += 1
                 break
         # IN THE END OF EACH EPOCH
-        average_episode_shield_loss = np.average(ep_shield_loss)
+        # if collision_during_ep = 1 -> adds to gen.no_collision_rb (there wasnt a collision during all ep timesteps), else: add to gen.collision_rb
+        if i_episode >= gen_masking_tresh: # In case of using generator
+            # saving gen_chosen_state in list (same structure as k_last_states, as it is sent to the shield in the Gen.loss())
+            ppo_agent.add_to_gen([gen_chosen_state], gen_chosen_action, collision_during_ep)
         rewards.append(current_ep_reward)
         costs.append(current_ep_cost)
         tasks.append(task_name)
@@ -451,24 +490,24 @@ def train(arguments=None):
     end_time = time.time()
     total_training_time = end_time - start_time
     torch.save((time_steps, rewards, costs, tasks, total_training_time, episodes_len, amount_of_done), save_stats_path)
+    # list of tuples - tuple for each update time step, the first element of each tuple is the time_step, than episdo, step in episode, etc.
+    torch.save(gen_loss_update_stats, save_gen_loss_stats_path)
+    torch.save(shield_loss_update_stats, save_shield_loss_stats_path)
     multi_task_env.close()
+    """
     # store collision_dict - log of collisions
     collision_log = [
         {'Time Step': timestep, 'Episode': i_episode + 1, "Step in the Episode": t, 'Prev States': prev_states,
          'Safety Scores (Shield)': safety_scores,
          'No Safe Action': no_safe_action, 'Chosen Action': action}
         for timestep, (i_episode, t, prev_states, safety_scores, no_safe_action, action) in collision_info.items()]
+
     # Collision_log_df - a dataframe with information regarding the collisions
-    shield_loss_update_stats_data = [(key, *value) for key, value in shield_loss_update_stats.items()]
-    shield_loss_update_stats_df = pd.DataFrame(shield_loss_update_stats_data, columns=["Time Step","Episode", "Step in Episode", "Shield Loss", "Len of Pos Samples", "Avg Prediction for Pos Samples", "Len of Neg Samples","Avg Prediction for Neg Samples"])
     collision_log_df = pd.DataFrame(collision_log)
-
-    #(i_episode, shield_loss, len_y_pos, avg_y_pos, len_y_neg, avg_y_neg)
-
     # Save the DataFrame to a CSV file
     # collision_log_df.to_csv(save_collision_info_path, index=False)
     torch.save(collision_log_df, save_collision_info_path)
-    torch.save(shield_loss_update_stats_df, save_shield_loss_stats_path)
+    """
 
 
 if __name__ == '__main__':

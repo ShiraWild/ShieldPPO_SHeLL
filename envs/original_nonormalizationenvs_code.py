@@ -1,62 +1,11 @@
-import numpy as np
 from gym.envs.registration import register
 from highway_env import utils
 from highway_env.envs import HighwayEnvFast, HighwayEnv, IntersectionEnv, RoundaboutEnv, UTurnEnv, TwoWayEnv, MergeEnv
 from highway_env.road.road import Road, RoadNetwork
 from highway_env.vehicle.controller import ControlledVehicle
-from classic_control_env import *
-#from classic_control_env.mountain_car_env import MountainCarEnv
-#from gym.envs.classic_control import MountainCarEnv
-from classic_control_env.cartpole import CartPoleEnv
-
-class CartPoleWithCost(CartPoleEnv):
-    #        self.state = self.np_random.uniform(low=-0.05, high=0.05, size=(4,))
-    # overriden method for GAN
-    def __init__(self):
-        super().__init__()
-        default_parameter_ranges = {
-            'gravity': (9.0, 10.0),
-            'masscart':  (0.5, 2),
-            'masspole':  (0.05, 0.5),
-            'length': (0.4, 0.6),
-        } #ranges to use when there is no GAN output
-        default_parameter_values = {}
-        for param, param_range in default_parameter_ranges.items():
-            default_parameter_values[param] = self.np_random.uniform(low= param_range[0], high=param_range[1])
-        self.update_params(default_parameter_values)
 
 
-    def _cost(self, state):
-        pole_angle = state[2]
-        cart_position = state[0]
-        # TODO -
-        if abs(pole_angle) >= self.theta_threshold_radians or abs(cart_position) >= self.x_threshold:
-            return 1
-        else:
-            return 0
-
-
-    # overriden method for gan
-    def update_params(self, params_dct):
-        for param, param_value in params_dct.items():
-            setattr(self, param, param_value)
-        self.total_mass = self.masspole + self.masscart
-        self.polemass_length = (self.masspole + self.length)
-
-    # overriden method for gan
-    def reset(self, gan_output=None):
-        if gan_output:
-            self.update_params(gan_output)
-        # TODO - 23.01 - Added this self.init() for getting new updated random params
-        else:
-            self.__init__()
-        # else - it will keep the original default params values.
-        self.state = self.np_random.uniform(low= -0.05, high= 0.05, size=(4,))
-        self.steps_beyond_done = None
-        return np.array(self.state)
-
-
-class HighwayEnvFastNoNormalization(HighwayEnv):
+class HighwayEnvFastNoNormalization(HighwayEnvFast):
     """
     A variant of highway-v0 with faster execution:
         - lower simulation frequency
@@ -64,7 +13,6 @@ class HighwayEnvFastNoNormalization(HighwayEnv):
         - only check collision of controlled vehicles with others
     """
     # Overriding method
-    # TODO -
     @classmethod
     def default_config(cls) -> dict:
         cfg = super().default_config()
@@ -72,7 +20,7 @@ class HighwayEnvFastNoNormalization(HighwayEnv):
             "observation": {
                 "type": "OccupancyGrid",
                 "vehicles_count": 15,
-                "features": ["presence", "x", "y", "vx", "vy"],
+                "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
                 "features_range": {
                     "x": [-100, 100],
                     "y": [-100, 100],
@@ -93,53 +41,6 @@ class HighwayEnvFastNoNormalization(HighwayEnv):
 
         })
         return cfg
-
-        # Overriding method
-    def _create_road(self) -> None:
-        """Create a road composed of straight adjacent lanes."""
-        # TODO - DEFINE AS CONFIG PARAM - speed_limit - V
-        speed_limit = self.config.get('speed_limit', 30)
-        self.road = Road(network=RoadNetwork.straight_road_network(self.config["lanes_count"],
-                                                                   speed_limit= speed_limit),
-                         np_random=self.np_random, record_history=self.config["show_trajectories"])
-
-    def _cost(self, action: int) -> float:
-        """The constraint signal is the occurrence of collisions."""
-        return float(self.vehicle.crashed)
-
-class HighwayEnvSimple(HighwayEnv):
-    """
-    A simplified variant of highway-v0 with a less challenging environment:
-        - lower number of vehicles
-        - lower density of vehicles
-        - simpler observation features
-    """
-    # Overriding method
-    # TODO -
-    @classmethod
-    def default_config(cls) -> dict:
-        cfg = super().default_config()
-        cfg.update({
-            "observation": {
-                "type": "OccupancyGrid",
-                "vehicles_count": 5,  # Reduced the number of vehicles
-                "features": ["presence", "x", "y", "vx", "vy"], # No cosx, etc.
-                "features_range": {
-                    "x": [-100, 100],
-                    "y": [-100, 100],
-                    "vx": [-20, 20],
-                    "vy": [-20, 20]
-                },
-                "grid_size": [[-27.5, 27.5], [-27.5, 27.5]],
-                "grid_step": [5, 5],
-                "absolute": False
-            },
-            "duration": 50,
-            "vehicles_count": 10,  # Reduce the total number of vehicles
-            "vehicles_density": 1,  # Reduce the density of vehicles (per timestep ?)
-        })
-        return cfg
-
 
         # Overriding method
     def _create_road(self) -> None:
@@ -276,11 +177,8 @@ class MergeEnvNoNormalization(MergeEnv):
         return float(self.vehicle.crashed)
 
 
-
-
-
-
 class EgoMergeEnvNoNormalization(MergeEnv):
+
     @classmethod
     def default_config(cls) -> dict:
         cfg = super().default_config()

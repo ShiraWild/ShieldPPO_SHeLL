@@ -453,8 +453,9 @@ class Shield(nn.Module):
     def loss(self, s_pos,last_informative_layers_pos, a_pos, s_neg,last_informative_layers_neg, a_neg):
         y_pos = self.forward(s_pos, last_informative_layers_pos, a_pos)
         y_neg = self.forward(s_neg, last_informative_layers_neg, a_neg)
+       # the loss value is for all the samples in the batch
         loss = self.loss_fn(y_pos, torch.ones_like(y_pos)) + self.loss_fn(y_neg, torch.zeros_like(y_neg))
-        return loss
+        return loss, y_pos, y_neg
 
 class ShieldPPO(PPO):  # currently only discrete action
     def __init__(self, state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip,
@@ -481,25 +482,35 @@ class ShieldPPO(PPO):  # currently only discrete action
         self.shield_buffer.add(s, last_informative_layer, a, label)
 
     def update_shield(self, batch_size):
+        # Returns (len_y_pos,  avg_y_pos, len_y_neg, avg_y_neg)
         if len(self.shield_buffer.neg_rb) == 0:
-            return 0.
+            return 0, 0, 0,0,0
         if len(self.shield_buffer) <= batch_size:
             batch_size = len(self.shield_buffer)
-        loss_ = 0.
+        loss_ = 0
+        y_pos_ = 0
+        y_neg_ = 0
         # k steps to update the shield network - each epoch (step) is one forward and backward pass
+        len_y_pos, len_y_neg = len(self.shield_buffer.pos_rb), len(self.shield_buffer.neg_rb)
         for i in range(self.K_epochs):
             # in each iteration - it samples batch_size positive and negative samples
             #  samples list of k_last_states states. for each sample.
             s_pos, last_informative_layers_pos, a_pos, s_neg, last_informative_layers_neg, a_neg = self.shield_buffer.sample(batch_size)
             self.shield_opt.zero_grad()
             # compute loss - binary cross entropy
-            loss = self.shield.loss(s_pos,last_informative_layers_pos,  a_pos, s_neg,last_informative_layers_neg, a_neg)
+            # TODO - THE LOSS SHOULD RETURN THE Y_POS AND Y_NEG
+            loss, y_pos, y_neg = self.shield.loss(s_pos,last_informative_layers_pos,  a_pos, s_neg,last_informative_layers_neg, a_neg)
+            y_pos_ += y_pos.mean().item()
+            y_neg_ += y_neg.mean().item()
             # back propogation
             loss.backward()
             # updating the shield parameters using Adam optimizer
             self.shield_opt.step()
             loss_ += loss.item()
-        return loss_ / self.K_epochs
+            # Average y_pos for each batch, and then the average over all k_epochs
+        avg_y_pos =  y_pos_ / self.K_epochs
+        avg_y_neg = y_neg_ / self.K_epochs
+        return loss_ / self.K_epochs, len_y_pos,  avg_y_pos, len_y_neg, avg_y_neg
 
 
     def select_action(self, states, valid_actions, timestep):
@@ -629,4 +640,3 @@ class RuleBasedShieldPPO(PPO):
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
         return action.item()
-

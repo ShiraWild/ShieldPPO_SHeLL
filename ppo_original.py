@@ -564,7 +564,7 @@ class RuleBasedShieldPPO(PPO):
         #
         #         return action.detach().cpu().numpy().flatten()
         #
-        #     else:
+        #     else:ש
         #         action_probs = self.policy_old.actor(state)
         #
         #         actions = torch.arange(self.action_dim).to(device)  # (n_action,)

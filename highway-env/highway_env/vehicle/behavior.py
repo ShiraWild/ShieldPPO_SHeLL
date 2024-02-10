@@ -256,7 +256,7 @@ class IDMVehicle(ControlledVehicle):
 
     def recover_from_stop(self, acceleration: float) -> float:
         """
-        If stopped on the wrong lane, try a reversing maneuver.
+        If stopped on the wrong lane, 5.12 a reversing maneuver.
 
         :param acceleration: desired acceleration from IDM
         :return: suggested acceleration to recover from being stuck

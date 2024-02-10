@@ -11,10 +11,10 @@ import torch.nn as nn
 from gym.utils import seeding
 from gym.wrappers.monitoring.video_recorder import VideoRecorder
 from highway_env.envs import HighwayEnvFast, MergeEnv
-from safe_rl.utils.mpi_tools import mpi_fork
-from safe_rl.utils.run_utils import setup_logger_kwargs
-import tensorflow as tf
-import safe_rl
+#from safe_rl.utils.mpi_tools import mpi_fork
+#from safe_rl.utils.run_utils import setup_logger_kwargs
+#import tensorflow as tf
+#import safe_rl
 from torch.distributions import MultivariateNormal
 from torch.distributions import Categorical
 import numpy as np
