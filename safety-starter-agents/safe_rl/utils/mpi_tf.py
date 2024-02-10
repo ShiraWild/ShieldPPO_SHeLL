@@ -1,5 +1,5 @@
 import numpy as np
-import tensorflow as tf
+#import tensorflow as tf
 from mpi4py import MPI
 from safe_rl.utils.mpi_tools import broadcast
 

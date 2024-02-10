@@ -4,7 +4,7 @@ import numpy
 import numpy as np
 import safety_gym
 import safe_rl
-import tensorflow as tf
+#import tensorflow as tf
 
 from gym import spaces
 from gym.envs.registration import register as register

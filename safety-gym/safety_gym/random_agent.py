@@ -20,7 +20,6 @@ def run_random(env_name):
         act = env.action_space.sample()
         assert env.action_space.contains(act)
         obs, reward, done, info = env.step(act)
-        # print('reward', reward)
         ep_ret += reward
         ep_cost += info.get('cost', 0)
         env.render()

@@ -1,0 +1,3 @@
+Parameter Value,Average Rewards,Average Costs
+LSTM - Actor Critic & Shield ,3.65099,0.98883
+NO LSTM - FROM THE ORIGINAL PAPER,4.55464,0.99002

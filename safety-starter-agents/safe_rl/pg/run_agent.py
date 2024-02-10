@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import numpy as np
-import tensorflow as tf
+#import tensorflow as tf
 import gym
 import time
 import safe_rl.pg.trust_region as tro
