@@ -1,26 +1,14 @@
-import argparse
 import collections
-import json
 import gym
 import os
-import glob
 import time
-from datetime import datetime
-import torch
-import torch.nn as nn
 from gym.utils import seeding
-from gym.wrappers.monitoring.video_recorder import VideoRecorder
-from highway_env.envs import HighwayEnvFast, MergeEnv
 # import tensorflow as tf
 # import safe_rl
-from torch.distributions import MultivariateNormal
-from torch.distributions import Categorical
 import numpy as np
-import highway_env
 # from SafetyRulesParser import SafetyRulesParser
-from ppo_shieldLSTM import PPO, ShieldPPO, RuleBasedShieldPPO, PPOCostAsReward
+from previous_codes.ppo_shieldLSTM import ShieldPPO
 from gym import spaces, register
-import sys
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 

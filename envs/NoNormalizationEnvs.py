@@ -14,6 +14,7 @@ class CartPoleWithCost(CartPoleEnv):
     # overriden method for GAN
     def __init__(self):
         super().__init__()
+        """
         default_parameter_ranges = {
             'gravity': (9.0, 10.0),
             'masscart':  (0.5, 2),
@@ -24,7 +25,7 @@ class CartPoleWithCost(CartPoleEnv):
         for param, param_range in default_parameter_ranges.items():
             default_parameter_values[param] = self.np_random.uniform(low= param_range[0], high=param_range[1])
         self.update_params(default_parameter_values)
-
+        """
 
     def _cost(self, state):
         pole_angle = state[2]

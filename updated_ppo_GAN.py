@@ -374,12 +374,13 @@ class ShieldBuffer:
 
     def add(self,epoch_trajectory):
         self.epoch_trajectories.append(epoch_trajectory)
-    
+
     def sample(self, n):
         # n - amount of epochs to sample
         # Exclude last epoch because we don't want a partial one
+        if n > len(self.epoch_trajectories[:-1]):
+            n = len(self.epoch_trajectories[:-1])
         trajectories_to_sample = self.epoch_trajectories[:-1]
-
         epochs_batch = random.sample(trajectories_to_sample, n)
         return epochs_batch
     """  
@@ -423,7 +424,9 @@ class Shield(nn.Module):
         if self.has_continuous_action_space:
             return a
         else:
-            return self.action_embedding(a.int())
+            one_hot = torch.zeros(a.size(0), 2).to(device)
+            one_hot.scatter_(1, a.long().unsqueeze(1), 1)
+            return one_hot
 
     def forward(self, s, a):
         a = self.encode_action(a)
@@ -432,24 +435,24 @@ class Shield(nn.Module):
 
 
     def loss(self, state, action, cost):
-        action = self.encode_action(action)
-        x = torch.cat([state, action], -1)
+        encoded_action = self.encode_action(action.to(device))
+        x = torch.cat([state, encoded_action], -1)
         x = x.float()
         y = self.net(x)
         cost = cost.view(-1,1)
-        loss = self.loss_fn(y,cost)
+        loss = self.loss_fn(y.to(device),cost.to(device))
         return loss
 
 
 class ShieldPPO(PPO):  # currently only discrete action
     def __init__(self, state_dim, action_dim, lr_actor, lr_critic, gamma, eps_clip,k_epochs_ppo, k_epochs_shield, k_epochs_gen,
-                 gen_output_dim, has_continuous_action_space,shield_lr, gen_lr,  latent_dim, action_std_init=0.6, masking_threshold=0, unsafe_tresh = 0.5,  param_ranges = None):
-        super().__init__(state_dim, action_dim, lr_actor, lr_critic, gamma, k_epochs_ppo, eps_clip, gen_output_dim, has_continuous_action_space, action_std_init)
+                 has_continuous_action_space,lr_shield, lr_gen,  latent_dim, shield_gamma, action_std_init, masking_threshold, unsafe_tresh ,  param_ranges = None):
+        super().__init__(state_dim, action_dim, lr_actor, lr_critic, gamma, k_epochs_ppo, eps_clip, has_continuous_action_space, action_std_init)
         self.action_dim = action_dim
         self.shield = Shield(state_dim, action_dim, has_continuous_action_space).to(device)
         self.gen = Generator(action_dim = self.action_dim, gamma = gamma, latent_dim = latent_dim, param_ranges = param_ranges).to(device)
-        self.shield_opt = torch.optim.Adam(self.shield.parameters(), lr= shield_lr)
-        self.gen_opt = torch.optim.Adam(self.gen.parameters(), lr= gen_lr)
+        self.shield_opt = torch.optim.Adam(self.shield.parameters(), lr= lr_shield)
+        self.gen_opt = torch.optim.Adam(self.gen.parameters(), lr= lr_gen)
         self.shield_buffer = ShieldBuffer()
         self.gen_buffer = GeneratorBuffer()
         self.masking_threshold = masking_threshold
@@ -458,6 +461,7 @@ class ShieldPPO(PPO):  # currently only discrete action
         self.k_epochs_shield = k_epochs_shield
         self.k_epochs_gen = k_epochs_gen
         self.k_epochs_ppo = k_epochs_ppo
+        self.shield_gamma = shield_gamma
 
 
     def add_to_shield(self,epoch_trajectory):
@@ -472,6 +476,7 @@ class ShieldPPO(PPO):  # currently only discrete action
     def update_shield(self, shield_episodes_batch_size):
         if len(self.shield_buffer) == 0:
             return 0
+        # -1 because we can't sample the last episode
         if len(self.shield_buffer) <= shield_episodes_batch_size:
             shield_episodes_batch_size = len(self.shield_buffer)
         # Sampling shield_episodes_batch_size episodes from Shield buffer
@@ -487,11 +492,11 @@ class ShieldPPO(PPO):  # currently only discrete action
                 state, action, cost, is_terminal = step[0]
                 if is_terminal:
                     discounted_cost = 0
-                discounted_cost = cost + (self.gamma * discounted_cost)
+                discounted_cost = cost + (self.shield_gamma * discounted_cost)
                 costs.insert(0, discounted_cost)
             # no need to normalize
-            states_ = [step[0] for step in reversed(episode_traj)]
-            actions_ = [step[1] for step in reversed(episode_traj)]
+            states_ = [step[0] for step in episode_traj]
+            actions_ = [step[1] for step in episode_traj]
 
             states = torch.squeeze(torch.stack(states_, dim=0)).detach().to(device)
             actions = torch.squeeze(torch.stack(actions_, dim=0)).detach().to(device)
@@ -508,7 +513,9 @@ class ShieldPPO(PPO):  # currently only discrete action
             average_episode_loss = episode_loss/self.k_epochs_shield
             episodes_batch_loss.append(average_episode_loss)
         # return loss average across all the instances in the batch
-        return sum(episodes_batch_loss)/ shield_episodes_batch_size
+        res = sum(episodes_batch_loss)/ shield_episodes_batch_size
+        #print("loss from update shield", res)
+        return res
 
 
 

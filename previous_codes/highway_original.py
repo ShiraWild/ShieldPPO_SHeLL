@@ -244,7 +244,7 @@ def train(arguments = None):
                               has_continuous_action_space, action_std)
 
     elif agent == "RuleBasedShieldPPO":
-        rule_parser = SafetyRulesParser("rules.txt", multi_task_env.env.action_type.actions)
+        rule_parser = SafetyRulesParser("../rules.txt", multi_task_env.env.action_type.actions)
         ppo_agent = RuleBasedShieldPPO(multi_task_env.state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip,
                                        has_continuous_action_space, rule_parser, action_std)
 

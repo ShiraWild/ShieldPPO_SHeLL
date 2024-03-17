@@ -182,6 +182,8 @@ def train(arguments=None):
                         help="clip parameter for PPO")
     parser.add_argument("--gamma", type=float, default=0.99,
                         help="discount factor")
+    parser.add_argument("--shield_gamma", type=float, default=0.6,
+                        help="discount factor for shield, while calculating loss function")
     parser.add_argument("--lr_actor", type=float, default=5e-5,
                         help="learning rate for actor network")
     parser.add_argument("--lr_critic", type=float, default=5e-5,
@@ -200,14 +202,16 @@ def train(arguments=None):
                         help="Number of cpus")
     # Shira - New Arguments
     parser.add_argument("--masking_threshold", type=int, default=0, help="Time step at which to start using the shield")
-    parser.add_argument("--shield_lr", type=float, default=1e-2, help="Shield learning rate")
-    parser.add_argument("--gen_lr", type=float, default=1e-2, help="Generator learning rate")
+    parser.add_argument("--lr_shield", type=float, default=5e-5, help="Shield learning rate")
+    parser.add_argument("--lr_gen", type=float, default=5e-5, help="Generator learning rate")
     parser.add_argument("--no_render", action="store_true", help="Disable rendering during simulation")
     parser.add_argument("--unsafe_tresh", type=float, default=0.5, help="Unsafe treshold for the Shield network")
     parser.add_argument("--gen_masking_tresh", type=float, default=0,
                         help="Episode Number at which to start using the Generator, for GAN")
     parser.add_argument("--update_gen_timestep", type=float, default=500,
                         help="Update the generator network each update_gen_timestep time steps")
+    parser.add_argument("--update_shield_timestep", type=float, default=500,
+                        help="Update the shield network each update_shield_timestep time steps")
     parser.add_argument("--gen_batch_size", type=float, default=1024,
                         help="Batch size to sample from buffer while updating generator")
     parser.add_argument("--shield_episodes_batch_size", type=float, default=3,
@@ -244,17 +248,18 @@ def train(arguments=None):
     min_action_std = None
     ################ PPO hyperparameters ################
     update_timestep = max_ep_len * 8  # update policy every n timesteps
-    update_shield_timestep = max_ep_len
+    update_shield_timestep = args.update_shield_timestep
     k_epochs_ppo = args.k_epochs_ppo  # update policy for K epochs [10,50,100]
     k_epochs_shield = args.k_epochs_shield  # update shield for K epochs [10,50,100]
     k_epochs_gen = args.k_epochs_gen  # update shield for K epochs [10,50,100]
 
     eps_clip = args.eps_clip  # clip parameter for PPO  [0.1,0.2]
     gamma = args.gamma  # discount factor [0.9,0.95  0.99]
+    shield_gamma = args.shield_gamma
     lr_actor = args.lr_actor  # learning rate for actor network [1e-4, 5e-4, 1e-3]
     lr_critic = args.lr_critic  # learning rate for critic network [1e-4, 5e-4, 1e-3]
-    shield_lr = args.shield_lr
-    gen_lr = args.gen_lr
+    lr_shield = args.lr_shield
+    lr_gen = args.lr_gen
     latent_dim = args.generator_latent_dim
     ############################################gy#########
     agent = args.algo
@@ -281,8 +286,8 @@ def train(arguments=None):
         print("Rendering is enabled")
     #### create new log file for each run
     curr_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_goal = "check_gan_performance(GAN)"
-    base_path = f"./models/03.02/NO-GAN/agent_{agent}_{run_goal}"
+    run_goal = "hi"
+    base_path = f"./models/04_03_compare_no_shield/new-shield/masking_threshold_{masking_threshold}"
     save_model_path = f"./{base_path}/model.pth"
 
     # Added another path to save the shield network (updated parameters)
@@ -319,10 +324,9 @@ def train(arguments=None):
         ppo_agent = PPO(multi_task_env.state_dim, action_dim, lr_actor, lr_critic, gamma, k_epochs_ppo, eps_clip,
                         has_continuous_action_space, action_std)
     elif agent == "ShieldPPO":
-        ppo_agent = ShieldPPO(multi_task_env.state_dim, action_dim, lr_actor, lr_critic, gamma,  eps_clip, k_epochs_ppo, k_epochs_shield, k_epochs_gen,
-                              has_continuous_action_space, action_std, masking_threshold=masking_threshold,
-                              unsafe_tresh = unsafe_tresh, param_ranges=param_ranges, shield_lr=shield_lr,
-                              gen_lr=gen_lr, latent_dim = latent_dim)
+        ppo_agent = ShieldPPO(state_dim = multi_task_env.state_dim, action_dim = action_dim, lr_actor = lr_actor, lr_critic = lr_critic, gamma = gamma,  eps_clip = eps_clip, k_epochs_ppo = k_epochs_ppo, k_epochs_shield = k_epochs_shield, k_epochs_gen = k_epochs_gen,
+                              has_continuous_action_space = has_continuous_action_space, lr_shield = lr_shield, lr_gen = lr_gen, latent_dim = latent_dim, shield_gamma = shield_gamma, action_std_init = action_std, masking_threshold=masking_threshold,
+                              unsafe_tresh = unsafe_tresh, param_ranges=param_ranges)
 
     elif agent == 'PPOCAR':
         ppo_agent = PPOCostAsReward(multi_task_env.state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs,
@@ -378,7 +382,6 @@ def train(arguments=None):
         current_ep_cost_renv = 0
         current_ep_len_renv = 0
         # shield_epoch_trajectory is for Shield Buffer
-        shield_epoch_trajectory = []
         is_mistake = False
         if args.record_mistakes:
             base_video_path = f"./{base_path}/Videos"
@@ -386,6 +389,7 @@ def train(arguments=None):
             video_path = f"{base_video_path}/episode_" + str(i_episode)
             trajectory_path = f"{base_video_path}/episode_" + str(i_episode) + "_trajectory.txt"
             video_recorder = VideoRecorder(multi_task_env.env, base_path=video_path, enabled=video_path is not None)
+        shield_epoch_trajectory = []
         # Starting a new episode - length max_ep_len
         for t in range(1, max_ep_len + 1):
             if i_episode >= gen_masking_tresh:
@@ -414,8 +418,8 @@ def train(arguments=None):
             ppo_agent.buffer.is_terminals.append(done)
             time_step += 1
             current_ep_reward += reward
-            current_ep_cost += info['cost']
-            shield_epoch_trajectory.append((torch.tensor(state), torch.tensor([action]), cost, done))
+            current_ep_cost += cost
+            shield_epoch_trajectory.append((torch.tensor(prev_state), torch.tensor([action]), cost, done))
             # Update PPO agent
             if time_step % update_timestep == 0:
                 ppo_agent.update()

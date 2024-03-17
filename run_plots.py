@@ -46,26 +46,32 @@ def smooth(x, window_size=1000):
 def create_loss_stats_df(data_path, network):
     log_stats = torch.load(data_path)
     log_stats_df = pd.DataFrame([(key, *value) for key, value in log_stats.items()],
-                                columns=["Time Step", "Episode", "Step in Episode", network + " Loss"])
+                                columns=["Time Step", "Episode", "Step in Episode", network + " Loss",
+                                         "Len of Pos Samples",
+                                         "Avg Prediction for Pos Samples", "Len of Neg Samples",
+                                         "Avg Prediction for Neg Samples"])
+    """
+    # in case we use the code of original shield (before changing it to as critic shield)
+    log_stats_df = pd.DataFrame([(key, *value) for key, value in log_stats.items()],
+                                columns=["Time Step", "Episode", "Step in Episode", network + " Loss", "Len y pos", "avg y pos", "len y neg", "avg y neg"])
+    """
     return log_stats_df
 
 
-
-def plot_loss(loss_stats_path, legends, save_path, network, log_scale = False):
+def plot_loss(loss_stats_path, legends, save_path, network):
     # Create a list of colors for each dataframe
     colors = cm.rainbow(np.linspace(0, 1, len(loss_stats_path)))
-  # Iterate over each dataframe, legend, and color
+    # Iterate over each dataframe, legend, and color
     for i, path in enumerate(loss_stats_path):
         df = create_loss_stats_df(path + ".log", network)
         df.to_csv(path + ".csv")
-        plt.plot(df['Time Step'], smooth(df[network + ' Loss']), label= legends[i], color= colors[i], alpha=0.7)
+        plt.plot(df['Time Step'], smooth(df[network + ' Loss']), label=legends[i], color=colors[i], alpha=0.7)
     plt.xlabel('Time Step')
     plt.ylabel(network + ' Loss')
     plt.legend()
-    if log_scale:
-        plt.yscale('log')
+    plt.yscale('log')
     plt.savefig(save_path + "/" + network + "Loss over Time")
-    plt.title(network+ " Loss over Time")
+    plt.title("Shield Loss over Time")
     plt.clf()
 
 
@@ -90,12 +96,13 @@ def plot_reward_collisions(agent_stats_paths_lst, agent_stats_evaluation_paths_l
     for i, eval_path in enumerate(agent_stats_evaluation_paths_lst):
         eval_df = torch.load(eval_path)
         # Plot Rewards
-        axes[1, 0].plot(eval_df[0], smooth(eval_df[1]), label= labels_lst[i], color=colors[i], alpha=0.7)
+        axes[1, 0].plot(eval_df[0], smooth(eval_df[1]), label=labels_lst[i], color=colors[i], alpha=0.7)
         axes[1, 0].set_xlabel('Time Step')
         axes[1, 0].set_ylabel('Reward')
         axes[1, 0].set_title('Evaluation Rewards over Time')
         # Plot Collisions (Costs)
-        axes[1, 1].plot(eval_df[0], smooth(eval_df[2]), color= colors[i])
+        print("evaluation costs sum is", sum(list(eval_df[2])))
+        axes[1, 1].plot(eval_df[0], smooth(eval_df[2]), color=colors[i])
         axes[1, 1].set_xlabel('Time Step')
         axes[1, 1].set_ylabel('Collisions')
         axes[1, 1].set_title("Evaluation Collisions over Time")
@@ -106,22 +113,23 @@ def plot_reward_collisions(agent_stats_paths_lst, agent_stats_evaluation_paths_l
     plt.tight_layout()
     plt.suptitle("Training and Evaluation Costs and Rewards over Time", y=1.02)
     plt.savefig(save_path + "/combined-cost-rewards-over-time.png")
-    plt.show()
+    #plt.show()
     plt.clf()
 
 
 # Create plots for Shield / Generator networks
-def create_plots(loss_stat_paths_lst, save_path, labels, type_of_samples,  network):
+def create_plots(loss_stat_paths_lst, save_path, labels, type_of_samples, network):
     # predictions & loss statistics
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(10, 8), sharex=True)
     colors = cm.rainbow(np.linspace(0, 1, len(loss_stat_paths_lst)))
     for i, path in enumerate(loss_stat_paths_lst):
-        first_line, sec_line = ['Len of ' + type_of_samples + ' Samples', 'Avg Prediction for ' + type_of_samples + ' Samples']
+        first_line, sec_line = ['Len of ' + type_of_samples + ' Samples',
+                                'Avg Prediction for ' + type_of_samples + ' Samples']
         df = create_loss_stats_df(path + ".log", network)
         df.to_csv(path + ".csv")
-        axes[0].plot(df['Time Step'], df[first_line], label=first_line, color = colors[i])
+        axes[0].plot(df['Time Step'], df[first_line], label=first_line, color=colors[i])
         axes[0].set_ylabel(first_line)
-        axes[1].plot(df['Time Step'], df[sec_line], label=sec_line, color = colors[i])
+        axes[1].plot(df['Time Step'], df[sec_line], label=sec_line, color=colors[i])
         axes[1].set_xlabel('Time Step')
         axes[1].set_ylabel('sec_line')
     plt.title(network + " " + type_of_samples + "samples")
@@ -130,60 +138,52 @@ def create_plots(loss_stat_paths_lst, save_path, labels, type_of_samples,  netwo
     plt.savefig(save_path + "/" + network + " " + type_of_samples + " samples.png")
     plt.clf()
 
-       # plot_loss(loss_stats_df, save_path[i] + network + "_loss_over_time.png", network)
-
+    # plot_loss(loss_stats_df, save_path[i] + network + "_loss_over_time.png", network)
 
 
 # 1. TODO - CHANGE base_path according to instructions. for example: "models/13_01_ShieldPPO_NO_GAN/safety_treshold_0.05_compare_safety_scores/"
 
-base_path = ["models/03.02/GAN/agent_ShieldPPO_check_gan_performance(GAN)/", "models/03.02/NO-GAN/agent_ShieldPPO_check_gan_performance(GAN)/"]
-
+base_path = ["C:/Users/Shir/ShieldPPO_SHeLL/models/try-with-shield/", "C:/Users/Shir/ShieldPPO_SHeLL/models/try_with_no_shield/"]
 # 2. TODO
 
-legend_lst = ["GAN", "NO GAN"]
+legend_lst = ["shield", "no shield"]
 
-# 3.TODO - complete save dir name - the name of directory to save the plots, for example "NO-GAN_compare-safety-scores"
-dir_name = "plots_0302_changes_in_update"
+
+# 3. TODO
+
+save_path = 'models/try-with-shield/plots'
+
+#dir_name = "plots_old_shield_original_env"
 
 "----------------------------------------------------------------------------"
 
-
-save_path = [p + "plots/" for p in base_path]  # ends with /plots/
-
-
+#save_path = [p + "plots/" for p in base_path]  # ends with /plots/
 shield_loss_stat_paths_lst = [p + "shield_loss_stats" for p in base_path]  # add more (without ".log")
 
-
-gen_loss_stat_paths_lst = [p + "gen_loss_stats" for p in base_path]   # add more (without ".log")
-
+gen_loss_stat_paths_lst = [p + "gen_loss_stats" for p in base_path]  # add more (without ".log")
 
 agent_stats_paths_lst = [p + "stats.log" for p in base_path]  # add more, just an example (ends with "stats.log")
 
-agent_stats_evaluation_paths_lst = [p + "stats_renv.log" for p in base_path]  # add more, just an example (ends with "stats.log")
+agent_stats_evaluation_paths_lst = [p + "stats_renv.log" for p in
+                                    base_path]  # add more, just an example (ends with "stats.log")
 
+#save_dir = "models/" + dir_name
 
+#os.makedirs(save_dir, exist_ok=True)
 
-save_dir = "models/" + dir_name
+os.makedirs(save_path, exist_ok=True)
 
-os.makedirs(save_dir, exist_ok=True)
-
-
-for new_path in save_path:
-    os.makedirs(new_path, exist_ok=True)
-
-
-
-
-
-plot_reward_collisions(agent_stats_paths_lst, agent_stats_evaluation_paths_lst, save_dir, legend_lst)
-
+plot_reward_collisions(agent_stats_paths_lst, agent_stats_evaluation_paths_lst, save_path, legend_lst)
 
 #create_plots(shield_loss_stat_paths_lst, save_dir , legend_lst, "Pos", "Shield")
 #create_plots(shield_loss_stat_paths_lst, save_dir, legend_lst, "Neg", "Shield")
-
-
 #create_plots(gen_loss_stat_paths_lst, save_dir , legend_lst, "Pos", "Gen")
 #create_plots(gen_loss_stat_paths_lst, save_dir, legend_lst, "Neg", "Gen")
-plot_loss(shield_loss_stat_paths_lst, legend_lst, save_dir, "Shield")
-plot_loss(gen_loss_stat_paths_lst, legend_lst, save_dir, "Gen", True)
+plot_loss(shield_loss_stat_paths_lst, legend_lst, save_path, "Shield")
+#plot_loss(gen_loss_stat_paths_lst, legend_lst, save_path, "Gen")
+
+
+
+
+
 

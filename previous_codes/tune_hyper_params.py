@@ -48,7 +48,7 @@ def tune_hyper_parameters(number_of_processes = 5):
     seed = 0
     algo = 'ShieldPPO'
     # performance_queue - for determining the best paramaeters (that minimizes the shield loss function)
-    best_config_file = "best_params/best_params.log"
+    best_config_file = "../best_params/best_params.log"
     save_lock = Lock()
     performance_queue = Queue()
     configs = grouper(itertools.product(K_epochss, eps_clips, gammas,max_ep_lens, lr_actors, lr_critics, masking_thresholds, shield_lrs, safety_thresholds),number_of_processes)
