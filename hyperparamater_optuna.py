@@ -164,16 +164,32 @@ env_list = [gym.make(x) for x in envs]
 multi_task_env = EnvsWrapper(env_list, has_continuous_action_space=False, no_render = True)
 
 
+parser = argparse.ArgumentParser(description='Arguments for hyperparameters, using optuna module')
+
+# Add arguments
+parser.add_argument('--save_trials', type=int, default=1, help='Save CSV every x trials')
+parser.add_argument('--save_path', type=str, default="/sise/home/wilds/ShieldPPO_SHeLL/save_optuna_trials/trials_stats.csv", help='Path to save CSV file')
+parser.add_argument('--n_trials', type=int, default=100, help='Number of trials')
+parser.add_argument('--direction', type=str, default='maximize', choices=['minimize', 'maximize'], help='Direction for optimization')
+parser.add_argument('--set_objective', type=str, default='r', choices=['r', 'c', 'sl', 'gl'], help='Objective function')
 
 
-# 1. SET SAVE_TRIALS FOR SAVING CSV EVERY X TRIALS.
 
-SAVE_TRIALS = 3
+args = parser.parse_args()
 
-# 2. SET SAVE_PATH FOR CSV FILE
 
-SAVE_STATS_PATH = "/sise/home/wilds/ShieldPPO_SHeLL/save_optuna_trials/trials_stats.csv"
 
+SAVE_TRIALS = args.save_trials
+
+SAVE_STATS_PATH = args.save_path
+
+N_TRIALS = args.n_trials
+
+
+DIRECTION = args.direction
+
+
+SET_OBJECTIVE = args.set_objective
 
 
 def save_trials_stats_as_csv(trial_number):
@@ -190,7 +206,12 @@ shield_losses_per_trial = []
 gen_losses_per_trial = []
 
 
-def objective(trial):
+def objective(trial, set_objective):
+    """
+    trial - the trial number
+    set_objective - 'r' for average rewards per trial (maximize) , 'c' for average costs per trial (minimize), 'sl' shield loss per trial, 'gl' - for average gl per trial
+
+    """
     print(f"Starting a trial number {trial.number}")
     # Hyperparameters to optimize
     render = False
@@ -335,10 +356,12 @@ def objective(trial):
     # save csv every save_trials trials
     if (trial.number % SAVE_TRIALS) == 0:
         save_trials_stats_as_csv(trial.number)
-    return average_reward_for_trial
-
+    if set_objective == 'r':
+        return average_reward_for_trial
+    else: #set_objective == 'c'
+        return average_cost_for_trial
 
 trials_data = []
 
-study = optuna.create_study(direction='maximize')
-study.optimize(objective, n_trials=100)
+study = optuna.create_study(direction=DIRECTION)
+study.optimize(lambda trial: objective(trial, SET_OBJECTIVE), n_trials = N_TRIALS)

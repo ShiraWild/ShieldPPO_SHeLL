@@ -287,7 +287,7 @@ def train(arguments=None):
     #### create new log file for each run
     curr_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_goal = "hi"
-    base_path = f"./models/04_03_compare_no_shield/new-shield/masking_threshold_{masking_threshold}"
+    base_path = f"./models/17.03.24/maximum_rewards/maximum_rewards_optuna"
     save_model_path = f"./{base_path}/model.pth"
 
     # Added another path to save the shield network (updated parameters)
