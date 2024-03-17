@@ -1,4 +1,4 @@
-#import
+# import
 import optuna
 import pandas as pd
 import argparse
@@ -22,7 +22,6 @@ from highway_env.envs import HighwayEnvFast, MergeEnv
 from envs.NoNormalizationEnvs import CartPoleWithCost
 from torch.distributions import MultivariateNormal, Categorical
 from updated_ppo_GAN import PPO, ShieldPPO, RuleBasedShieldPPO, PPOCostAsReward, Generator, GeneratorBuffer
-
 
 # set device to cpu or cuda
 if (torch.cuda.is_available()):
@@ -161,23 +160,26 @@ def register_envs(envs):
 envs = ["CartPoleWithCost-v0"]
 register_envs(envs)
 env_list = [gym.make(x) for x in envs]
-multi_task_env = EnvsWrapper(env_list, has_continuous_action_space=False, no_render = True)
-
+multi_task_env = EnvsWrapper(env_list, has_continuous_action_space=False, no_render=True)
 
 parser = argparse.ArgumentParser(description='Arguments for hyperparameters, using optuna module')
 
 # Add arguments
 parser.add_argument('--save_trials', type=int, default=1, help='Save CSV every x trials')
-parser.add_argument('--save_path', type=str, default="/sise/home/wilds/ShieldPPO_SHeLL/save_optuna_trials/trials_stats.csv", help='Path to save CSV file')
+parser.add_argument('--save_path', type=str,
+                    default="optuna_trials/maximize-r/trials_stats.csv",
+                    help='Path to save CSV file')
 parser.add_argument('--n_trials', type=int, default=100, help='Number of trials')
-parser.add_argument('--direction', type=str, default='maximize', choices=['minimize', 'maximize'], help='Direction for optimization')
+parser.add_argument('--direction', type=str, default='maximize', choices=['minimize', 'maximize'],
+                    help='Direction for optimization')
 parser.add_argument('--set_objective', type=str, default='r', choices=['r', 'c', 'sl', 'gl'], help='Objective function')
-
-
+parser.add_argument("--generator_latent_dim", type=float, default=32,
+                    help="The dimension of latent space (Generator)")
+parser.add_argument('--no_gan', type=bool, default=False, help='if no_gan = True - not using generator')
+parser.add_argument('--max_training_timesteps_per_trial', type=int, default=50000,
+                    help='max_training_timesteps_per_trial')
 
 args = parser.parse_args()
-
-
 
 SAVE_TRIALS = args.save_trials
 
@@ -185,22 +187,27 @@ SAVE_STATS_PATH = args.save_path
 
 N_TRIALS = args.n_trials
 
-
 DIRECTION = args.direction
 
+generator_latent_dim = args.generator_latent_dim
 
 SET_OBJECTIVE = args.set_objective
+
+no_gan = args.no_gan
+
+max_training_timesteps = args.max_training_timesteps_per_trial
 
 
 def save_trials_stats_as_csv(trial_number):
     trials_data_df = pd.DataFrame(trials_data)
     params_df = pd.DataFrame(trials_data_df['Params Values'].tolist())
-    final_trials_df = pd.concat([trials_data_df[['Trial Number', 'Rewards', 'Costs', 'Shield Loss', 'Gen Loss']], params_df],axis=1)
+    final_trials_df = pd.concat(
+        [trials_data_df[['Trial Number', 'Rewards', 'Costs', 'Shield Loss', 'Gen Loss']], params_df], axis=1)
     final_trials_df.to_csv(SAVE_STATS_PATH, index=False)
     print(f"trials_stats.csv was last updated for trial number {trial_number}")
 
-"---------------------------------------------------------------------------------------------------------------------------------------------------------------"
 
+"---------------------------------------------------------------------------------------------------------------------------------------------------------------"
 
 shield_losses_per_trial = []
 gen_losses_per_trial = []
@@ -228,13 +235,17 @@ def objective(trial, set_objective):
     shield_episodes_bath_size = trial.suggest_int('shield_episodes_batch_size', 1, 6)
     masking_threshold = trial.suggest_int('masking_threshold', 1, 500000)
     # generator paramaters
-    latent_dim = trial.suggest_categorical('latent_dim', [16, 32, 64, 128])
+    # latent_dim = trial.suggest_categorical('latent_dim', [16.0, 32.0, 64.0, 128.0])
     gen_episodes_bath_size = trial.suggest_int('shield_episodes_batch_size', 1, 10)
-    #update_gen_timestep = trial.suggest_int('update_gen_timestep', 0, 100000)
+
+    update_gen_timestep = trial.suggest_int('update_gen_timestep', 0, 100000)
     # gen masking tresh is according to epochs
-    #gen_masking_tresh = trial.suggest_int('gen_masking_tresh', 0, 50)
-    gen_masking_tresh = 1000000000000000000000
-    update_gen_timestep = 1000000000000000000000
+    gen_masking_tresh = trial.suggest_int('gen_masking_tresh', 0, 50)
+
+    if no_gan:
+        gen_masking_tresh = 1000000000000000000000
+        update_gen_timestep = 1000000000000000000000
+
     action_dim = multi_task_env.action_space_size()
     # optimal params according to ray ppo
     lr_actor = 5e-5
@@ -251,12 +262,14 @@ def objective(trial, set_objective):
         'length': {'range': (0.4, 0.6), 'type': float}
     }
     # define agent
-    ppo_agent = ShieldPPO(state_dim = multi_task_env.state_dim, action_dim = action_dim, lr_actor = lr_actor, lr_critic = lr_critic, gamma = gamma,  eps_clip = eps_clip, k_epochs_ppo = k_epochs_ppo, k_epochs_shield = k_epochs_shield, k_epochs_gen = k_epochs_gen,
-                              has_continuous_action_space = False, lr_shield = lr_shield, lr_gen = lr_gen, latent_dim = latent_dim, shield_gamma = shield_gamma, action_std_init = action_std, masking_threshold=masking_threshold,
-                              unsafe_tresh = unsafe_thresh, param_ranges=param_ranges)
+    ppo_agent = ShieldPPO(state_dim=multi_task_env.state_dim, action_dim=action_dim, latent_dim=generator_latent_dim,
+                          lr_actor=lr_actor, lr_critic=lr_critic, gamma=gamma, eps_clip=eps_clip,
+                          k_epochs_ppo=k_epochs_ppo, k_epochs_shield=k_epochs_shield, k_epochs_gen=k_epochs_gen,
+                          has_continuous_action_space=False, lr_shield=lr_shield, lr_gen=lr_gen,
+                          shield_gamma=shield_gamma, action_std_init=action_std, masking_threshold=masking_threshold,
+                          unsafe_tresh=unsafe_thresh, param_ranges=param_ranges)
 
     masking_threshold = trial.suggest_int('masking_threshold', 1, 500000)
-    max_training_timesteps = 50000
     time_step = 0
     max_ep_len = 200
 
@@ -272,6 +285,7 @@ def objective(trial, set_objective):
     # same for gen
     all_episodes_gen_loss = []
     while time_step <= max_training_timesteps:
+        print(f"time_step is {time_step}")
         if i_episode >= gen_masking_tresh:
             steps_before_collision = 0
             param_dict, unsafe_scores = ppo_agent.get_generated_env_config()
@@ -317,29 +331,32 @@ def objective(trial, set_objective):
                 gen_update_loss = ppo_agent.update_gen(gen_episodes_bath_size)
                 current_episode_gen_loss.append(gen_update_loss)
             if done:
-                break
-        i_episode +=1
+                break;
+
         # add the average shield loss for this episode to episodes_shield_loss
-        all_episodes_shield_loss.append(sum(current_episode_shield_loss)/len(current_episode_shield_loss))
+        all_episodes_shield_loss.append(sum(current_episode_shield_loss) / len(current_episode_shield_loss))
+
         if i_episode >= masking_threshold:
-            all_episodes_gen_loss.append(sum(current_episode_gen_loss)/len(current_episode_gen_loss))
+            all_episodes_gen_loss.append(sum(current_episode_gen_loss) / len(current_episode_gen_loss))
         if i_episode >= gen_masking_tresh:
             # In case of using generator - saving gen_chosen_state in list (same structure as k_last_states, as it is sent to the shield in the Gen.loss())
             ppo_agent.add_to_gen(gen_chosen_state, gen_chosen_action, steps_before_collision)
         ppo_agent.add_to_shield(shield_epoch_trajectory)
         all_episodes_rewards_sum.append(sum_rewards_ep)
         all_episodes_costs_sum.append(sum_costs_ep)
+        i_episode += 1
+
     # initaize shield loss and gen loss to Null to deal with the problem of maskng
     shield_loss, gen_loss = None, None
     # Calculate stats for current trial
     shield_loss = sum(all_episodes_shield_loss) / len(all_episodes_shield_loss)
     shield_losses_per_trial.append(shield_loss)
 
-    if i_episode >= gen_masking_tresh:
+    if i_episode >= gen_masking_tresh and len(all_episodes_gen_loss):
         gen_loss = sum(all_episodes_gen_loss) / len(all_episodes_gen_loss)
         gen_losses_per_trial.append(gen_loss)
 
-    average_reward_for_trial =  sum(all_episodes_rewards_sum)/len(all_episodes_rewards_sum)
+    average_reward_for_trial = sum(all_episodes_rewards_sum) / len(all_episodes_rewards_sum)
     print(f"Trial #{trial.number} average episodes rewards is {average_reward_for_trial} ")
     average_cost_for_trial = sum(all_episodes_costs_sum) / len(all_episodes_costs_sum)
 
@@ -349,7 +366,7 @@ def objective(trial, set_objective):
         'Params Values': trial.params,
         'Rewards': average_reward_for_trial,
         'Costs': average_cost_for_trial,
-        'Shield Loss':  shield_loss if shield_loss is not None else "no shield yet",
+        'Shield Loss': shield_loss if shield_loss is not None else "no shield yet",
         'Gen Loss': gen_loss if gen_loss is not None else "no gen yet"
     }
     trials_data.append(trial_data)
@@ -358,10 +375,11 @@ def objective(trial, set_objective):
         save_trials_stats_as_csv(trial.number)
     if set_objective == 'r':
         return average_reward_for_trial
-    else: #set_objective == 'c'
+    else:  # set_objective == 'c'
         return average_cost_for_trial
+
 
 trials_data = []
 
 study = optuna.create_study(direction=DIRECTION)
-study.optimize(lambda trial: objective(trial, SET_OBJECTIVE), n_trials = N_TRIALS)
+study.optimize(lambda trial: objective(trial, SET_OBJECTIVE), n_trials=N_TRIALS)

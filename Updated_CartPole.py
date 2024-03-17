@@ -1,28 +1,20 @@
 # imports
 # extenral
-import pandas as pd
 import argparse
 import collections
 import json
 import gym
 import os
-import glob
 import numpy as np
 import time
 from datetime import datetime
 import torch
-import sys
-import torch.nn as nn
 from gym.utils import seeding
 from gym.wrappers.monitoring.video_recorder import VideoRecorder
 from gym import spaces, register
 
 # internal
-from highway_env.envs import HighwayEnvFast, MergeEnv
-from envs.NoNormalizationEnvs import CartPoleWithCost
-from torch.distributions import MultivariateNormal, Categorical
-from updated_ppo_GAN import PPO, ShieldPPO, RuleBasedShieldPPO, PPOCostAsReward, Generator, GeneratorBuffer
-
+from updated_ppo_GAN import ShieldPPO
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -357,6 +349,7 @@ def train(arguments=None):
     # training loop
     shield_loss_update_stats = {}
     gen_loss_update_stats = {}
+    steps_before_collision = None
     while time_step <= max_training_timesteps:
         if i_episode >= gen_masking_tresh:
             # using generator to get a generated configuration for env, and the first chosen action
@@ -539,7 +532,7 @@ def train(arguments=None):
     total_training_time = end_time - start_time
     torch.save((time_steps, rewards, costs, tasks, total_training_time, episodes_len, amount_of_done, i_episode), save_stats_path)
     torch.save((time_steps_renv, rewards_renv, costs_renv, total_training_time, episodes_len_renv, amount_of_done_renv, i_episode), save_stats_path_renv)
-    # list of tuples - tuple for each update time step, the first element of each tuple is the time_step, than episdo, step in episode, etc.
+    # list of tuples - tuple for each update time step, the first element of each tuple is the time_step, than episode, step in episode, etc.
     torch.save(gen_loss_update_stats, save_gen_loss_stats_path)
     torch.save(shield_loss_update_stats, save_shield_loss_stats_path)
     multi_task_env.close()
